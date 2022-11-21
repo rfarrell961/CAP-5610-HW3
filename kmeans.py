@@ -1,5 +1,5 @@
 import sys
-
+import random
 import numpy as np
 from numpy.linalg import norm
 
@@ -49,14 +49,20 @@ def computeCentroids(clusters):
         centroids[i] = centroid
     return centroids
 
-def computeSSE(clusters, centroids, method="Euclidean"):
-    result = 0
+def computeSSE(clusters, centroids, method="Euclidean", returnSSEs=False):
+    results = []
     for i in range(len(centroids)):
         centroid = np.copy(centroids[i])
         cluster = np.copy(clusters[i])
+        result = 0
         for instance in cluster:
-            result += (distance(centroid, instance) ** 2)
-    return result
+            result += distance(centroid, instance) ** 2
+        results.append(result)
+
+    if returnSSEs:
+        return results
+    else:
+        return sum(results)
 
 def getAccuracy(data, labels, centroids, method="Euclidean"):
     assigned = np.apply_along_axis(assign, axis=1, arr=data, centroids=centroids, method=method)
@@ -72,13 +78,38 @@ def getAccuracy(data, labels, centroids, method="Euclidean"):
         total += 1
     return correct / total
 
-def kmeans(rawData, k, method="Euclidean", condition="noChange"):
+def fixEmpty(clusters, centroids):
+    newCentroids = np.empty((len(clusters), len(clusters[0][0])))
+    didFix = False
+    for i in range(len(centroids)):
+        centroid = centroids[i]
+        cluster = clusters[i]
+        if len(cluster) == 0:
+            print("Empty Cluster found")
+            didFix = True
+            SSEs = computeSSE(clusters, centroids, returnSSEs=True)
+            worstSSE = SSEs.index(max(SSEs))
+            newCentroids[i] = random.choice(clusters[worstSSE])
+        else:
+            newCentroids[i] = centroids[i]
+
+    if didFix:
+        return newCentroids
+    else:
+        return False
+
+
+
+def kmeans(rawData, k, method="Euclidean", condition="noChange", startingCentroids=None):
     result = {}
     data = np.copy(rawData)
-    num_features = data.shape[1]
-    num_samples = data.shape[0]
-    # randomly select k initial centroids
-    centroids = np.copy(data[np.random.choice(num_samples, k, replace=False)])
+
+    # randomly select k initial centroids, if no inital ones are specified
+    if startingCentroids is not None:
+        centroids = startingCentroids
+    else:
+        centroids = np.copy(data[np.random.choice(data.shape[0], k, replace=False)])
+
     prev_centroids = np.ones_like(centroids)
     iteration = 0
     prev_SSE = sys.maxsize
@@ -87,14 +118,20 @@ def kmeans(rawData, k, method="Euclidean", condition="noChange"):
     if condition == "noChange":
         while not np.array_equal(centroids, prev_centroids):
             iteration += 1
-            clusters = assignAll(data, centroids, method)
             prev_centroids = np.copy(centroids)
+            clusters = assignAll(data, centroids, method)
+            centroids = fixEmpty(clusters, centroids)
+            if centroids:
+                clusters = assignAll(data, centroids, method)
             centroids = computeCentroids(clusters)
 
     elif condition == "SSE":
         while SSE < prev_SSE:
             iteration += 1
             clusters = assignAll(data, centroids, method)
+            centroids = fixEmpty(clusters, centroids)
+            if centroids:
+                clusters = assignAll(data, centroids, method)
             centroids = computeCentroids(clusters)
             prev_SSE = SSE
             SSE = computeSSE(clusters, centroids, method)
@@ -103,13 +140,19 @@ def kmeans(rawData, k, method="Euclidean", condition="noChange"):
         while iteration < 50:
             iteration += 1
             clusters = assignAll(data, centroids, method)
+            centroids = fixEmpty(clusters, centroids)
+            if centroids:
+                clusters = assignAll(data, centroids, method)
             centroids = computeCentroids(clusters)
 
     elif condition == "All":
         while (not np.array_equal(centroids, prev_centroids)) and SSE < prev_SSE and iteration < 100:
             iteration += 1
+            prev_centroids = np.copy(centroids)
             clusters = assignAll(data, centroids, method)
-            prev_centroids = centroids
+            centroids = fixEmpty(clusters, centroids)
+            if centroids:
+                clusters = assignAll(data, centroids, method)
             centroids = computeCentroids(clusters)
             prev_SSE = SSE
             SSE = computeSSE(clusters, centroids, method)
@@ -123,29 +166,31 @@ def kmeans(rawData, k, method="Euclidean", condition="noChange"):
     return result
 
 # TESTING
-data = np.loadtxt("kmeans_data/data.csv", delimiter=',')
+raw_data = np.loadtxt("kmeans_data/data.csv", delimiter=',')
+data = (raw_data - np.min(raw_data)) / (np.max(raw_data) - np.min(raw_data))  # normalize data
 labels = np.loadtxt("kmeans_data/label.csv", delimiter=',')
 methods = ["Euclidean", "Cosine", "Jarcard"]
 conditions = ["noChange", "SSE", "Iterations"]
-
+k = 10
+startCentroids = np.copy(data[np.random.choice(data.shape[0], k, replace=False)])
 #Q1 / #Q2 / Q3 (change condition to "All" for 3
 
 for method in methods:
-    results = kmeans(data, 10, method=method, condition="noChange")
+    results = kmeans(data, k, method=method, condition="All", startingCentroids=startCentroids)
     print(method + ": ")
     print(f"    SSE: {results['SSE']:,.2f}")
     print(f"    NumIterations: {results['numIterations']}")
     acc = getAccuracy(data, labels, results["centroids"], method=method)
-    print(f"    Accuracy: {acc * 100}")
+    print(f"    Accuracy: {acc * 100:,.2f}")
 
 #Q4
 for method in methods:
     for condition in conditions:
-        results = kmeans(data, 10, method=method, condition=condition)
+        results = kmeans(data, k, method=method, condition=condition, startingCentroids=startCentroids)
         print(f"{method} + {condition}")
         print(f"    SSE: {results['SSE']:,.2f}")
         print(f"    NumIterations: {results['numIterations']}")
         acc = getAccuracy(data, labels, results["centroids"], method=method)
-        print(f"    Accuracy: {acc * 100}")
+        print(f"    Accuracy: {acc * 100:,.2f}")
 
 
